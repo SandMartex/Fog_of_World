@@ -342,6 +342,36 @@ def _state_fips(row):
     return "00"
 
 
+def _setup_fonts():
+    """注册随仓库附带的 Source Sans 3 字体；找不到则优雅退回。
+    返回 (regular_family, semibold_family)。"""
+    from matplotlib import font_manager as fm
+    here = os.path.dirname(os.path.abspath(__file__))
+    font_dir = os.path.join(here, "fonts")
+    reg = semi = None
+    files = {
+        "SourceSans3-Regular.otf": "reg",
+        "SourceSans3-Semibold.otf": "semi",
+        "SourceSans3-Bold.otf": "bold",
+    }
+    for fname in files:
+        fpath = os.path.join(font_dir, fname)
+        if os.path.exists(fpath):
+            try:
+                fm.fontManager.addfont(fpath)
+            except Exception:
+                pass
+    names = {f.name for f in fm.fontManager.ttflist}
+    if "Source Sans 3" in names:
+        # Source Sans 3 的 Regular/Semibold/Bold 同名，靠 weight 区分
+        return "Source Sans 3", "Source Sans 3"
+    # 退回到系统里较干净的无衬线
+    for cand in ("Liberation Sans", "FreeSans", "DejaVu Sans"):
+        if cand in names:
+            return cand, cand
+    return "DejaVu Sans", "DejaVu Sans"
+
+
 def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     import matplotlib
     matplotlib.use("Agg")
@@ -351,6 +381,11 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     import numpy as np
     import pyproj
     from shapely.ops import transform as shp_transform
+
+    # ── fonts ─────────────────────────────────────────────
+    FONT_REG, FONT_SEMI = _setup_fonts()
+    plt.rcParams["font.family"] = FONT_REG
+    plt.rcParams["svg.fonttype"] = "none"
 
     # ── projections ──────────────────────────────────────
     wgs84      = pyproj.CRS("EPSG:4326")
@@ -387,10 +422,13 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     hi_alb    = hi_wgs.to_crs(albers_hi)
     print(f"  CONUS: {len(conus_alb)} counties | AK: {len(ak_alb)} | HI: {len(hi_alb)}")
 
-    # ── helpers ───────────────────────────────────────────
-    C_VIS  = "#C0392B"
-    C_UNVIS= "#C5CDD6"
-    C_EDGE = "#E8EDF0"  # very faint county lines within states
+    # ── palette ───────────────────────────────────────────
+    C_VIS    = "#D1495B"   # visited — 现代玫瑰红
+    C_UNVIS  = "#D6DCE4"   # not visited — 柔和冷灰（够深，能在白底上立住）
+    C_EDGE   = "#FFFFFF"   # 县界：白色细发丝线，干净通透
+    C_STATE  = "#9AA6B2"   # 州界：板岩灰（比近黑柔和）
+    C_INK    = "#2B2D42"   # 主文字：深墨蓝
+    C_MUTED  = "#6B7280"   # 次要文字：中灰
 
     def _draw_poly(ax, poly, fc, lw):
         def ring_path(ring):
@@ -498,7 +536,7 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     visited_state_names = sorted(STATE_NAMES[sf] for sf in visited_states)
 
     # ── main CONUS — 占据画布上方主体 ───────────────────
-    ax_main = fig.add_axes([0.0, 0.215, 1.0, 0.725])
+    ax_main = fig.add_axes([0.0, 0.205, 1.0, 0.735])
     ax_main.set_facecolor("white")
     ax_main.axis("off")
     # Hard CONUS extent in ESRI:102003 (meters)
@@ -506,77 +544,87 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     ax_main.set_ylim(-1_400_000, 1_650_000)
     ax_main.set_aspect("equal")
     draw_gdf(ax_main, conus_alb, visited_idx, lw=0.3)
-    draw_state_borders(ax_main, states_alb, lw=0.5)
+    draw_state_borders(ax_main, states_alb, lw=0.6, color=C_STATE)
 
-    def _fit_bounds(ax, gdf_albers, pad=0.05):
-        """把 ax 视野设到 gdf 的范围（等比），用于插图取景"""
-        b = gdf_albers.total_bounds
-        if not np.all(np.isfinite(b)) or b[2] <= b[0]:
-            return False
-        px = (b[2]-b[0])*pad; py = (b[3]-b[1])*pad
-        ax.set_xlim(b[0]-px, b[2]+px)
-        ax.set_ylim(b[1]-py, b[3]+py)
-        ax.set_aspect("equal")
-        return True
+    # ── Alaska + Hawaii insets：叠在地图左下角的太平洋空域，透明底让 CONUS 透出。
+    #    各自缩放到清晰可辨（均不变形）。注意：按真实比例夏威夷只有阿拉斯加的
+    #    ~1/30，会缩成一个点——故与所有标准美国地图一样分别取景。 ─────
+    def _bounds(gdf):
+        b = gdf.total_bounds
+        return b if (np.all(np.isfinite(b)) and b[2] > b[0]) else None
 
-    # ── Alaska inset（裁掉阿留申长尾，主体放大）放在地图左下空海域 ──
+    # Alaska 取景：裁掉阿留申长尾（保留主体 + 任何已访问县）
+    ak_frame = None
     if len(ak_alb) > 0:
-        ax_ak = fig.add_axes([0.03, 0.225, 0.22, 0.19])
-        ax_ak.axis("off"); ax_ak.patch.set_visible(False)  # 透明底，让 CONUS 透出
-        draw_gdf(ax_ak, ak_alb, visited_idx, lw=0.25)
-        # 用经度 > -156 的县（含已访问县）框定视野，避免阿留申群岛把主体压扁
         core = ak_wgs[(ak_wgs.geometry.representative_point().x > -156)
                       | (ak_wgs.index.isin(visited_idx))]
-        frame = (core if len(core) else ak_wgs).to_crs(albers_ak)
-        _fit_bounds(ax_ak, frame, pad=0.06)
-        ax_ak.text(0.5, -0.03, "Alaska", transform=ax_ak.transAxes,
-                   ha="center", va="top", fontsize=15, color="#555555",
-                   fontfamily="DejaVu Sans")
+        ak_frame = _bounds((core if len(core) else ak_wgs).to_crs(albers_ak))
+    hi_frame = _bounds(hi_alb) if len(hi_alb) > 0 else None
 
-    # ── Hawaii inset（放大）紧邻 Alaska 右侧 ──────────────
-    if len(hi_alb) > 0:
-        ax_hi = fig.add_axes([0.275, 0.225, 0.115, 0.14])
-        ax_hi.axis("off"); ax_hi.patch.set_visible(False)
-        draw_gdf(ax_hi, hi_alb, visited_idx, lw=0.3)
-        _fit_bounds(ax_hi, hi_alb, pad=0.08)
-        ax_hi.text(0.5, -0.03, "Hawaii", transform=ax_hi.transAxes,
-                   ha="center", va="top", fontsize=15, color="#555555",
-                   fontfamily="DejaVu Sans")
+    def _place_inset(frame, gdf, x0, baseline, label, lw,
+                     target_w=None, target_h=None):
+        """放置一个等比（不变形）插图，左下角对齐 (x0, baseline)；返回右边界 x。
+        以 target_w 或 target_h 控制大小，另一维按真实长宽比推出。"""
+        dx, dy = frame[2]-frame[0], frame[3]-frame[1]
+        if target_h is not None:
+            ppm = target_h * H / dy
+        else:
+            ppm = target_w * W / dx
+        w, h = dx*ppm/W, dy*ppm/H
+        ax = fig.add_axes([x0, baseline, w, h])
+        ax.axis("off"); ax.patch.set_visible(False)
+        draw_gdf(ax, gdf, visited_idx, lw=lw)
+        ax.set_xlim(frame[0], frame[2]); ax.set_ylim(frame[1], frame[3])
+        ax.text(0.5, -0.06, label, transform=ax.transAxes, ha="center", va="top",
+                fontsize=15, color=C_MUTED, fontfamily=FONT_REG)
+        return x0 + w, h
+
+    x_after = 0.04
+    if ak_frame is not None:
+        x_after, _ = _place_inset(ak_frame, ak_alb, 0.04, 0.225,
+                                  "Alaska", 0.2, target_h=0.185)
+    if hi_frame is not None:
+        _place_inset(hi_frame, hi_alb, x_after + 0.035, 0.25,
+                     "Hawaii", 0.35, target_w=0.085)
 
     # ── title ────────────────────────────────────────────
     total = len(counties_gdf)
     pct   = len(visited_idx) / total * 100
-    fig.text(0.5, 0.975,
-             f"Fog of World  ·  USA County Explorer   "
-             f"{len(visited_idx)} / {total} counties  ({pct:.1f}%)",
-             ha="center", va="top", fontsize=24, fontweight="bold",
-             color="#1a1a1a", fontfamily="DejaVu Sans")
+    fig.text(0.5, 0.972,
+             f"Fog of World   ·   USA County Explorer",
+             ha="center", va="top", fontsize=27, fontweight="semibold",
+             color=C_INK, fontfamily=FONT_SEMI)
+    fig.text(0.5, 0.927,
+             f"{len(visited_idx):,} of {total:,} counties explored   ·   {pct:.1f}%",
+             ha="center", va="top", fontsize=17, color=C_MUTED, fontfamily=FONT_REG)
 
-    # ── Legend — 居中横排，单独成行，不压地图 ─────────────
-    v_patch = mpatches.Patch(color=C_VIS,   label=f"Visited  ({len(visited_idx)} counties)")
+    # ── Legend — 收进右上角空白海域（不压地图主体）─────────
+    v_patch = mpatches.Patch(color=C_VIS,   label=f"Visited ({len(visited_idx):,} counties)")
     u_patch = mpatches.Patch(color=C_UNVIS, label="Not visited")
-    ax_leg = fig.add_axes([0.0, 0.15, 1.0, 0.05]); ax_leg.axis("off")
-    ax_leg.patch.set_visible(False)
-    ax_leg.legend(handles=[v_patch, u_patch], loc="center", ncol=2,
-                  frameon=False, handlelength=1.4,
-                  handleheight=1.2, columnspacing=4.0,
-                  prop={"family": "DejaVu Sans", "size": 19})
+    leg = ax_main.legend(handles=[v_patch, u_patch], loc="upper right",
+                         bbox_to_anchor=(0.99, 0.99), frameon=False,
+                         handlelength=1.3, handleheight=1.3, labelspacing=0.7,
+                         borderaxespad=0.0,
+                         prop={"family": FONT_REG, "size": 18})
+    for t in leg.get_texts():
+        t.set_color(C_INK)
 
-    # ── Visited states — 居中、均衡多行 ───────────────────
+    # ── Visited states — 居中、均衡多行；精致中点分隔 ──────
     if visited_state_names:
         n = len(visited_state_names)
         per_line = 9
         nlines = max(1, math.ceil(n / per_line))
         per_line = math.ceil(n / nlines)   # 让各行尽量均衡
-        lines = ["   •   ".join(visited_state_names[i:i + per_line])
+        sep = "   ·   "                     # 小中点，比大黑点雅致
+        lines = [sep.join(visited_state_names[i:i + per_line])
                  for i in range(0, n, per_line)]
         body = "\n".join(lines)
-        fig.text(0.5, 0.122, f"States visited ({n})",
-                 ha="center", va="top", fontsize=19, fontweight="bold",
-                 color="#1a1a1a", fontfamily="DejaVu Sans")
-        fig.text(0.5, 0.075, body,
-                 ha="center", va="top", fontsize=17, linespacing=1.7,
-                 color="#333333", fontfamily="DejaVu Sans")
+        fig.text(0.5, 0.135, f"States visited · {n}",
+                 ha="center", va="top", fontsize=18, fontweight="semibold",
+                 color=C_INK, fontfamily=FONT_SEMI)
+        fig.text(0.5, 0.088, body,
+                 ha="center", va="top", fontsize=17, linespacing=1.8,
+                 color=C_MUTED, fontfamily=FONT_REG)
 
     print(f"Saving image ({W}x{H} @ {DPI}dpi)...")
     plt.savefig(output_path, dpi=DPI,
