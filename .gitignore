@@ -1,0 +1,9 @@
+# 县级边界缓存（运行时自动下载）
+us_counties.geojson
+*.converted.geojson
+# 生成的地图
+fow_usa_counties.png
+*.png
+# Python
+__pycache__/
+*.pyc
