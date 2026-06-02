@@ -485,40 +485,9 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
         for line in shared_lines:
             plot_line(line)
 
-    # main CONUS — 上移地图，底部预留一条带放 AK/HI 插图与州名列表
-    ax_main = fig.add_axes([0.01, 0.17, 0.98, 0.79])
-    ax_main.set_facecolor("white")
-    ax_main.axis("off")
-    # Hard CONUS extent in ESRI:102003 (meters)
-    ax_main.set_xlim(-2_400_000, 2_500_000)
-    ax_main.set_ylim(-1_400_000, 1_650_000)
-    ax_main.set_aspect("equal")
-    draw_gdf(ax_main, conus_alb, visited_idx, lw=0.3)
-    draw_state_borders(ax_main, states_alb, lw=0.5)
-
-    # ── Alaska inset (bottom-left band) ──────────────────
-    if len(ak_alb) > 0:
-        ax_ak = fig.add_axes([0.02, 0.03, 0.17, 0.13])
-        if setup_ax(ax_ak, ak_alb):
-            draw_gdf(ax_ak, ak_alb, visited_idx, lw=0.25)
-            ax_ak.text(0.5, -0.04, "Alaska", transform=ax_ak.transAxes,
-                       ha="center", va="top", fontsize=13, color="#555555",
-                       fontfamily="DejaVu Sans")
-
-    # ── Hawaii inset (next to Alaska) ────────────────────
-    if len(hi_alb) > 0:
-        ax_hi = fig.add_axes([0.195, 0.04, 0.085, 0.10])
-        if setup_ax(ax_hi, hi_alb):
-            draw_gdf(ax_hi, hi_alb, visited_idx, lw=0.25)
-            ax_hi.text(0.5, -0.04, "Hawaii", transform=ax_hi.transAxes,
-                       ha="center", va="top", fontsize=13, color="#555555",
-                       fontfamily="DejaVu Sans")
-
-    # ── which states were visited (含 AK / HI) ───────────
-    # 用统一 CRS(WGS84) 的三块拼接，避免不同投影无法合并
-    import pandas as pd
-    all_regions = pd.concat([conus_wgs, ak_wgs, hi_wgs])
-    all_regions = all_regions.copy()
+    # ── 先算好去过的州（含 AK / HI），供页脚使用 ──────────
+    import pandas as pd, math, numpy as np
+    all_regions = pd.concat([conus_wgs, ak_wgs, hi_wgs]).copy()
     all_regions["_sfips"] = all_regions.apply(_state_fips, axis=1)
     visited_states = set()
     for idx in visited_idx:
@@ -528,45 +497,89 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
                 visited_states.add(sf)
     visited_state_names = sorted(STATE_NAMES[sf] for sf in visited_states)
 
-    # ── title + legend ────────────────────────────────────
+    # ── main CONUS — 占据画布上方主体 ───────────────────
+    ax_main = fig.add_axes([0.0, 0.215, 1.0, 0.725])
+    ax_main.set_facecolor("white")
+    ax_main.axis("off")
+    # Hard CONUS extent in ESRI:102003 (meters)
+    ax_main.set_xlim(-2_400_000, 2_500_000)
+    ax_main.set_ylim(-1_400_000, 1_650_000)
+    ax_main.set_aspect("equal")
+    draw_gdf(ax_main, conus_alb, visited_idx, lw=0.3)
+    draw_state_borders(ax_main, states_alb, lw=0.5)
+
+    def _fit_bounds(ax, gdf_albers, pad=0.05):
+        """把 ax 视野设到 gdf 的范围（等比），用于插图取景"""
+        b = gdf_albers.total_bounds
+        if not np.all(np.isfinite(b)) or b[2] <= b[0]:
+            return False
+        px = (b[2]-b[0])*pad; py = (b[3]-b[1])*pad
+        ax.set_xlim(b[0]-px, b[2]+px)
+        ax.set_ylim(b[1]-py, b[3]+py)
+        ax.set_aspect("equal")
+        return True
+
+    # ── Alaska inset（裁掉阿留申长尾，主体放大）放在地图左下空海域 ──
+    if len(ak_alb) > 0:
+        ax_ak = fig.add_axes([0.03, 0.225, 0.22, 0.19])
+        ax_ak.axis("off"); ax_ak.patch.set_visible(False)  # 透明底，让 CONUS 透出
+        draw_gdf(ax_ak, ak_alb, visited_idx, lw=0.25)
+        # 用经度 > -156 的县（含已访问县）框定视野，避免阿留申群岛把主体压扁
+        core = ak_wgs[(ak_wgs.geometry.representative_point().x > -156)
+                      | (ak_wgs.index.isin(visited_idx))]
+        frame = (core if len(core) else ak_wgs).to_crs(albers_ak)
+        _fit_bounds(ax_ak, frame, pad=0.06)
+        ax_ak.text(0.5, -0.03, "Alaska", transform=ax_ak.transAxes,
+                   ha="center", va="top", fontsize=15, color="#555555",
+                   fontfamily="DejaVu Sans")
+
+    # ── Hawaii inset（放大）紧邻 Alaska 右侧 ──────────────
+    if len(hi_alb) > 0:
+        ax_hi = fig.add_axes([0.275, 0.225, 0.115, 0.14])
+        ax_hi.axis("off"); ax_hi.patch.set_visible(False)
+        draw_gdf(ax_hi, hi_alb, visited_idx, lw=0.3)
+        _fit_bounds(ax_hi, hi_alb, pad=0.08)
+        ax_hi.text(0.5, -0.03, "Hawaii", transform=ax_hi.transAxes,
+                   ha="center", va="top", fontsize=15, color="#555555",
+                   fontfamily="DejaVu Sans")
+
+    # ── title ────────────────────────────────────────────
     total = len(counties_gdf)
     pct   = len(visited_idx) / total * 100
-    fig.text(0.5, 0.978,
+    fig.text(0.5, 0.975,
              f"Fog of World  ·  USA County Explorer   "
              f"{len(visited_idx)} / {total} counties  ({pct:.1f}%)",
-             ha="center", va="top", fontsize=26, fontweight="bold",
+             ha="center", va="top", fontsize=24, fontweight="bold",
              color="#1a1a1a", fontfamily="DejaVu Sans")
 
-    # Legend — 放到地图右下角空海域，避免与标题/列表冲突
+    # ── Legend — 居中横排，单独成行，不压地图 ─────────────
     v_patch = mpatches.Patch(color=C_VIS,   label=f"Visited  ({len(visited_idx)} counties)")
     u_patch = mpatches.Patch(color=C_UNVIS, label="Not visited")
-    ax_main.legend(handles=[v_patch, u_patch], loc="lower right",
-                   fontsize=16, frameon=False,
-                   prop={"family": "DejaVu Sans", "size": 16},
-                   bbox_to_anchor=(0.99, 0.02))
+    ax_leg = fig.add_axes([0.0, 0.15, 1.0, 0.05]); ax_leg.axis("off")
+    ax_leg.patch.set_visible(False)
+    ax_leg.legend(handles=[v_patch, u_patch], loc="center", ncol=2,
+                  frameon=False, handlelength=1.4,
+                  handleheight=1.2, columnspacing=4.0,
+                  prop={"family": "DejaVu Sans", "size": 19})
 
-    # Visited states — 多行平铺（避免挤在一行）；放在底部条带、AK/HI 插图右侧
+    # ── Visited states — 居中、均衡多行 ───────────────────
     if visited_state_names:
-        import math
         n = len(visited_state_names)
         per_line = 9
         nlines = max(1, math.ceil(n / per_line))
         per_line = math.ceil(n / nlines)   # 让各行尽量均衡
-        lines = []
-        for i in range(0, n, per_line):
-            lines.append("   •   ".join(visited_state_names[i:i + per_line]))
+        lines = ["   •   ".join(visited_state_names[i:i + per_line])
+                 for i in range(0, n, per_line)]
         body = "\n".join(lines)
-        header = f"States visited ({n})"
-        # 左对齐，起点在插图右侧
-        fig.text(0.34, 0.135, header,
-                 ha="left", va="top", fontsize=17, fontweight="bold",
+        fig.text(0.5, 0.122, f"States visited ({n})",
+                 ha="center", va="top", fontsize=19, fontweight="bold",
                  color="#1a1a1a", fontfamily="DejaVu Sans")
-        fig.text(0.34, 0.105, body,
-                 ha="left", va="top", fontsize=15, linespacing=1.7,
+        fig.text(0.5, 0.075, body,
+                 ha="center", va="top", fontsize=17, linespacing=1.7,
                  color="#333333", fontfamily="DejaVu Sans")
 
     print(f"Saving image ({W}x{H} @ {DPI}dpi)...")
-    plt.savefig(output_path, dpi=DPI, bbox_inches="tight",
+    plt.savefig(output_path, dpi=DPI,
                 facecolor="white", edgecolor="none")
     plt.close()
     print(f"\n✅ Saved: {output_path}")
