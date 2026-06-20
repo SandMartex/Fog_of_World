@@ -422,14 +422,15 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     hi_alb    = hi_wgs.to_crs(albers_hi)
     print(f"  CONUS: {len(conus_alb)} counties | AK: {len(ak_alb)} | HI: {len(hi_alb)}")
 
-    # ── palette（旧地图纸 / 探索档案质感）─────────────────────
-    BG       = "#F4F0E8"   # 米白纸感底
-    C_VIS    = "#B24A3B"   # 锈红 / 砖红（旅行档案感，非警报红）
-    C_UNVIS  = "#D8D5CC"   # 未访问县：暖灰
-    C_EDGE   = "#ECE8DF"   # 县界：极浅
-    C_STATE  = "#A8A39A"   # 州界：稍深暖灰
-    C_INK    = "#3A352E"   # 主文字：墨棕
-    C_MUTED  = "#8A8275"   # 次要文字：灰褐
+    # ── palette（vintage / antique map）─────────────────────
+    BG       = "#E8DFC9"   # aged parchment
+    C_VIS    = "#8B6D3F"   # antique gold / dark ochre
+    C_UNVIS  = "#D5CBAF"   # faded linen
+    C_EDGE   = "#C9BFA5"   # subtle seam
+    C_STATE  = "#7A6E56"   # old leather
+    C_INK    = "#2E2418"   # dark sepia ink
+    C_MUTED  = "#6B5F4A"   # faded ink
+    C_WATER  = "#D2D6C4"   # muted sage (for inset bg)
     FONT_MONO = "DejaVu Sans Mono"
 
     def _draw_poly(ax, poly, fc, lw):
@@ -562,15 +563,15 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
         x0, y0, bw, bh = box
         # 边框
         fr = fig.add_axes([x0, y0, bw, bh])
-        fr.set_xticks([]); fr.set_yticks([]); fr.set_facecolor("none")
+        fr.set_xticks([]); fr.set_yticks([]); fr.set_facecolor(C_WATER)
         for s in fr.spines.values():
-            s.set_edgecolor(C_STATE); s.set_linewidth(1.1)
+            s.set_edgecolor(C_STATE); s.set_linewidth(1.4)
         fr.text(0.5, 0.90, spaced(label.upper()), transform=fr.transAxes,
                 ha="center", va="center", fontsize=12, color=C_MUTED,
                 fontfamily=FONT_REG)
         # 内部地图（留出标题空间），等比不变形
         inner = fig.add_axes([x0+bw*0.08, y0+bh*0.06, bw*0.84, bh*0.72])
-        inner.axis("off"); inner.patch.set_visible(False)
+        inner.axis("off"); inner.set_facecolor("none")
         draw_gdf(inner, gdf, visited_idx, lw=lw)
         inner.set_xlim(frame[0], frame[2]); inner.set_ylim(frame[1], frame[3])
         inner.set_aspect("equal")
@@ -595,28 +596,54 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     fig.text(0.745, 0.905, np_line2, ha="left", va="top",
              fontsize=18, color=C_INK, fontfamily=FONT_MONO)
 
-    # ── 图例（克制：小色块 + 小写注释）──────────────────────────
-    ax_leg = fig.add_axes([0.03, 0.115, 0.30, 0.045]); ax_leg.axis("off")
-    ax_leg.set_xlim(0, 1); ax_leg.set_ylim(0, 1)
-    ax_leg.add_patch(mpatches.Rectangle((0.0, 0.3), 0.045, 0.42, fc=C_VIS, ec="none"))
-    ax_leg.text(0.065, 0.5, "visited", va="center", ha="left",
-                fontsize=14, color=C_MUTED, fontfamily=FONT_REG)
-    ax_leg.add_patch(mpatches.Rectangle((0.27, 0.3), 0.045, 0.42, fc=C_UNVIS, ec="none"))
-    ax_leg.text(0.335, 0.5, "not yet", va="center", ha="left",
-                fontsize=14, color=C_MUTED, fontfamily=FONT_REG)
+    # ── 图例（inside map, bottom-left of CONUS）────────────────
+    ax_main.add_patch(mpatches.Rectangle(
+        (-2_300_000, -1_300_000), 520_000, 250_000,
+        fc=BG, ec="none", alpha=0.85, zorder=8))
+    sq = 65_000
+    ax_main.add_patch(mpatches.Rectangle(
+        (-2_250_000, -1_150_000), sq, sq, fc=C_VIS, ec="none", zorder=9))
+    ax_main.text(-2_170_000, -1_118_000, "visited", va="center", ha="left",
+                 fontsize=10, color=C_MUTED, fontfamily=FONT_REG, zorder=9)
+    ax_main.add_patch(mpatches.Rectangle(
+        (-2_250_000, -1_260_000), sq, sq, fc=C_UNVIS, ec="none", zorder=9))
+    ax_main.text(-2_170_000, -1_228_000, "not yet", va="center", ha="left",
+                 fontsize=10, color=C_MUTED, fontfamily=FONT_REG, zorder=9)
 
-    # ── 州名注释块（左下，小字灰，像地图注记）────────────────────
-    if visited_state_names:
-        per_line = 9
-        nlines = max(1, math.ceil(nst / per_line))
-        per_line = math.ceil(nst / nlines)
-        sep = "  ·  "
-        lines = [sep.join(visited_state_names[i:i+per_line]) for i in range(0, nst, per_line)]
-        body = "\n".join(lines)
-        fig.text(0.03, 0.088, spaced("STATES VISITED"), ha="left", va="top",
-                 fontsize=12, color=C_MUTED, fontfamily=FONT_REG)
-        fig.text(0.03, 0.057, body, ha="left", va="top",
-                 fontsize=13, linespacing=1.65, color=C_MUTED, fontfamily=FONT_REG)
+    # ── 旅行时间线（按时间顺序，代替州名列表）────────────────────
+    TRAVEL_LOG = [
+        ("California",  "2024.8"),
+        ("Washington",  "2024.10"),
+        ("Hawaii",      "2025.2"),
+        ("Nevada",      "2025.3"),
+        ("Arizona",     "2025.3"),
+        ("Utah",        "2025.3"),
+        ("New York",    "2025.5"),
+        ("New Jersey",  "2025.5"),
+        ("Florida",     "2026.1"),
+        ("Texas",       "2026.1"),
+        ("Illinois",    "2026.3"),
+        ("Georgia",     "2026.3"),
+        ("Maryland",    "2026.3"),
+        ("DC",          "2026.3"),
+        ("Idaho",       "2026.5"),
+        ("Wyoming",     "2026.5"),
+        ("Montana",     "2026.5"),
+        ("Oregon",      "2026.6"),
+    ]
+    fig.text(0.03, 0.148, spaced("TRAVEL LOG"), ha="left", va="top",
+             fontsize=12, color=C_MUTED, fontfamily=FONT_REG)
+    cols = 3
+    per_col = math.ceil(len(TRAVEL_LOG) / cols)
+    col_x = [0.03, 0.27, 0.51]
+    for ci in range(cols):
+        chunk = TRAVEL_LOG[ci * per_col : (ci + 1) * per_col]
+        for ri, (state, date) in enumerate(chunk):
+            y = 0.118 - ri * 0.018
+            fig.text(col_x[ci], y, f"{date}", ha="left", va="top",
+                     fontsize=10, color=C_INK, fontfamily=FONT_MONO)
+            fig.text(col_x[ci] + 0.055, y, state, ha="left", va="top",
+                     fontsize=10, color=C_MUTED, fontfamily=FONT_REG)
 
     print(f"Saving image ({W}x{H} @ {DPI}dpi)...")
     plt.savefig(output_path, dpi=DPI,
