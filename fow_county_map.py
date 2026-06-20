@@ -427,11 +427,11 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     C_SEA    = "#A7B3A0"   # muted antique sage-teal (sea / map bg)
     C_VIS    = "#7A4A28"   # burnt sienna / umber (visited)
     C_UNVIS  = "#CDC09A"   # tan land
-    C_EDGE   = "#B2A47C"   # faded seam
-    C_STATE  = "#5E4A2C"   # dark walnut (state border)
+    C_EDGE   = "#C4B894"   # county edges: near-invisible
+    C_STATE  = "#4A3820"   # state borders: dark walnut, strong
     C_INK    = "#3A2A16"   # dark sepia ink
     C_MUTED  = "#6B5838"   # faded ink
-    C_FRAME  = "#5E4A2C"   # frame line
+    C_FRAME  = "#7A6644"   # frame line (medium brown)
     C_WATER  = C_SEA       # inset bg = sea
     FONT_MONO = "DejaVu Sans Mono"
 
@@ -539,24 +539,27 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     total_states = len({sf for sf in all_regions["_sfips"] if sf in STATE_NAMES})
     total = len(counties_gdf); nvis = len(visited_idx); nst = len(visited_state_names)
 
+    THIN = " "   # Unicode thin space (~1/5 em)
     def spaced(s, gap=" "):
         return gap.join(list(s))
+    def tracked(s, gap=THIN):
+        return gap.join(list(s))
 
-    # ── CONUS（左侧主体）：先铺带边框的背景面板，再画地图 ───────
-    MAIN_RECT = [0.02, 0.19, 0.70, 0.665]
+    # ── 主地图面板（扩大到几乎填满画布）──────────────────────────
+    MAIN_RECT = [0.02, 0.175, 0.96, 0.70]
     ax_fr = fig.add_axes(MAIN_RECT)
     ax_fr.set_xticks([]); ax_fr.set_yticks([]); ax_fr.set_facecolor(C_SEA)
     for s in ax_fr.spines.values():
-        s.set_edgecolor(C_FRAME); s.set_linewidth(2.2)
+        s.set_edgecolor(C_FRAME); s.set_linewidth(1.2)
 
     ax_main = fig.add_axes(MAIN_RECT)
     ax_main.axis("off"); ax_main.set_facecolor("none")
-    ax_main.set_xlim(-2_400_000, 2_500_000); ax_main.set_ylim(-1_400_000, 1_650_000)
+    ax_main.set_xlim(-2_500_000, 2_600_000); ax_main.set_ylim(-1_500_000, 1_650_000)
     ax_main.set_aspect("equal")
-    draw_gdf(ax_main, conus_alb, visited_idx, lw=0.3)
-    draw_state_borders(ax_main, states_alb, lw=0.6, color=C_STATE)
+    draw_gdf(ax_main, conus_alb, visited_idx, lw=0.18)
+    draw_state_borders(ax_main, states_alb, lw=0.9, color=C_STATE)
 
-    # ── Alaska / Hawaii：带细边框的 inset box（右侧上下两格）─────
+    # ── Alaska / Hawaii：inset 嵌入主地图内部 ──────────────────
     def _bounds(gdf):
         b = gdf.total_bounds
         return b if (np.all(np.isfinite(b)) and b[2] > b[0]) else None
@@ -569,73 +572,68 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
 
     def _inset_box(frame, gdf, box, label, lw):
         x0, y0, bw, bh = box
-        # 边框
         fr = fig.add_axes([x0, y0, bw, bh])
         fr.set_xticks([]); fr.set_yticks([]); fr.set_facecolor(C_WATER)
         for s in fr.spines.values():
-            s.set_edgecolor(C_STATE); s.set_linewidth(1.4)
-        fr.text(0.5, 0.90, spaced(label.upper()), transform=fr.transAxes,
-                ha="center", va="center", fontsize=12, color=C_MUTED,
-                fontfamily=FONT_REG)
-        # 内部地图（留出标题空间），等比不变形
-        inner = fig.add_axes([x0+bw*0.08, y0+bh*0.06, bw*0.84, bh*0.72])
+            s.set_edgecolor(C_FRAME); s.set_linewidth(0.8)
+        fr.text(0.5, 0.92, tracked(label.upper()), transform=fr.transAxes,
+                ha="center", va="center", fontsize=9, color=C_MUTED,
+                fontfamily=FONT_REG, fontweight="semibold")
+        inner = fig.add_axes([x0+bw*0.06, y0+bh*0.05, bw*0.88, bh*0.75])
         inner.axis("off"); inner.set_facecolor("none")
         draw_gdf(inner, gdf, visited_idx, lw=lw)
         inner.set_xlim(frame[0], frame[2]); inner.set_ylim(frame[1], frame[3])
         inner.set_aspect("equal")
 
     if ak_frame is not None:
-        _inset_box(ak_frame, ak_alb, [0.765, 0.50, 0.20, 0.26], "Alaska", 0.22)
+        _inset_box(ak_frame, ak_alb, [0.73, 0.56, 0.22, 0.24], "Alaska", 0.18)
     if hi_frame is not None:
-        _inset_box(hi_frame, hi_alb, [0.765, 0.215, 0.20, 0.235], "Hawaii", 0.3)
+        _inset_box(hi_frame, hi_alb, [0.73, 0.21, 0.22, 0.22], "Hawaii", 0.25)
 
-    # ── 标题（左上，间隔大写）+ 副标题 ──────────────────────────
-    fig.text(0.025, 0.955, spaced("AMERICAN") + "    " + spaced("ATLAS"),
+    # ── 标题（轻 tracking，不要太散）+ 副标题 ──────────────────
+    fig.text(0.025, 0.955, tracked("AMERICAN") + "   " + tracked("ATLAS"),
              ha="left", va="top", fontsize=33, fontweight="semibold",
              color=C_INK, fontfamily=FONT_SEMI)
-    fig.text(0.027, 0.895, "A county-level travel record",
-             ha="left", va="top", fontsize=17, color=C_MUTED,
+    fig.text(0.027, 0.900, "County-level travel record",
+             ha="left", va="top", fontsize=15, color=C_MUTED,
              fontfamily=FONT_REG, fontstyle="italic")
 
-    # ── 进度条（右上）────────────────────────────────────────
-    ax_prog = fig.add_axes([0.765, 0.875, 0.20, 0.095])
+    # ── 进度条（右上，紧凑）──────────────────────────────────
+    ax_prog = fig.add_axes([0.70, 0.885, 0.26, 0.085])
     ax_prog.axis("off"); ax_prog.set_xlim(0, 1); ax_prog.set_ylim(0, 1)
 
     def progress_row(y_top, label, num, den):
         frac = (num / den) if den else 0
-        bar_h = 0.14
-        y_bar = y_top - 0.30
-        ax_prog.text(0.0, y_top, spaced(label), ha="left", va="center",
-                     fontsize=10.5, color=C_MUTED, fontfamily=FONT_REG)
+        bar_h = 0.13
+        y_bar = y_top - 0.26
+        ax_prog.text(0.0, y_top, tracked(label), ha="left", va="center",
+                     fontsize=10, color=C_MUTED, fontfamily=FONT_REG)
         ax_prog.text(1.0, y_top, f"{num:,} / {den:,}", ha="right", va="center",
-                     fontsize=11, color=C_INK, fontfamily=FONT_MONO)
-        # track
+                     fontsize=10.5, color=C_INK, fontfamily=FONT_MONO)
         ax_prog.add_patch(mpatches.Rectangle((0, y_bar), 1.0, bar_h,
-                          fc=C_UNVIS, ec=C_FRAME, lw=0.8))
-        # fill
+                          fc=C_UNVIS, ec=C_FRAME, lw=0.5))
         ax_prog.add_patch(mpatches.Rectangle((0, y_bar), max(frac, 0.004), bar_h,
                           fc=C_VIS, ec="none"))
-        # percentage
-        ax_prog.text(1.0, y_bar - 0.12, f"{frac*100:.0f}%", ha="right", va="top",
-                     fontsize=8.5, color=C_MUTED, fontfamily=FONT_MONO)
 
-    progress_row(0.92, "COUNTIES", nvis, total)
+    progress_row(0.88, "COUNTIES", nvis, total)
     progress_row(0.42, "STATES", nst, total_states)
 
-    # ── 图例（inside map, bottom-left of CONUS）────────────────
-    lx, ly = -2_320_000, -1_330_000
-    lw_box, lh_box = 760_000, 360_000
+    # ── 图例（inside map, 无边框浮动）───────────────────────────
+    lx, ly = -2_400_000, -1_380_000
+    sq = 90_000
+    gap = 130_000
+    ax_main.add_patch(mpatches.FancyBboxPatch(
+        (lx - 30_000, ly - 20_000), 650_000, gap * 2 + sq + 40_000,
+        fc=C_SEA, ec="none", alpha=0.75, zorder=8,
+        boxstyle="round,pad=20000"))
     ax_main.add_patch(mpatches.Rectangle(
-        (lx, ly), lw_box, lh_box, fc=BG, ec=C_FRAME, lw=1.0, alpha=0.92, zorder=8))
-    sq = 110_000
+        (lx, ly + gap), sq, sq, fc=C_VIS, ec="none", zorder=9))
+    ax_main.text(lx + sq + 40_000, ly + gap + sq/2, "Visited", va="center",
+                 ha="left", fontsize=12, color=C_INK, fontfamily=FONT_REG, zorder=9)
     ax_main.add_patch(mpatches.Rectangle(
-        (lx + 70_000, ly + 195_000), sq, sq, fc=C_VIS, ec=C_FRAME, lw=0.5, zorder=9))
-    ax_main.text(lx + 230_000, ly + 250_000, "visited", va="center", ha="left",
-                 fontsize=14, color=C_INK, fontfamily=FONT_REG, zorder=9)
-    ax_main.add_patch(mpatches.Rectangle(
-        (lx + 70_000, ly + 55_000), sq, sq, fc=C_UNVIS, ec=C_FRAME, lw=0.5, zorder=9))
-    ax_main.text(lx + 230_000, ly + 110_000, "not yet", va="center", ha="left",
-                 fontsize=14, color=C_INK, fontfamily=FONT_REG, zorder=9)
+        (lx, ly), sq, sq, fc=C_UNVIS, ec="none", zorder=9))
+    ax_main.text(lx + sq + 40_000, ly + sq/2, "Not yet", va="center",
+                 ha="left", fontsize=12, color=C_INK, fontfamily=FONT_REG, zorder=9)
 
     # ── 旅行时间线（按时间顺序，代替州名列表）────────────────────
     TRAVEL_LOG = [
@@ -661,19 +659,18 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     def fmt_date(d):
         y, m = d.split(".")
         return f"{y}.{int(m):02d}"
-    fig.text(0.03, 0.150, spaced("TRAVEL LOG"), ha="left", va="top",
-             fontsize=12, color=C_MUTED, fontfamily=FONT_REG)
+    fig.text(0.03, 0.150, tracked("TRAVEL LOG"), ha="left", va="top",
+             fontsize=11, color=C_MUTED, fontfamily=FONT_REG)
     cols = 3
     per_col = math.ceil(len(TRAVEL_LOG) / cols)
     col_x = [0.03, 0.28, 0.53]
     for ci in range(cols):
         chunk = TRAVEL_LOG[ci * per_col : (ci + 1) * per_col]
         for ri, (state, date) in enumerate(chunk):
-            y = 0.118 - ri * 0.019
-            fig.text(col_x[ci], y, fmt_date(date), ha="left", va="top",
-                     fontsize=10.5, color=C_INK, fontfamily=FONT_MONO)
-            fig.text(col_x[ci] + 0.062, y, state.upper(), ha="left", va="top",
-                     fontsize=10.5, color=C_MUTED, fontfamily=FONT_REG)
+            y = 0.120 - ri * 0.018
+            entry = f"{fmt_date(date)}  {state.upper()}"
+            fig.text(col_x[ci], y, entry, ha="left", va="top",
+                     fontsize=10, color=C_INK, fontfamily=FONT_MONO)
 
     print(f"Saving image ({W}x{H} @ {DPI}dpi)...")
     plt.savefig(output_path, dpi=DPI,
