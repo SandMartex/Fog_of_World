@@ -307,7 +307,7 @@ def find_visited_counties(points, counties_gdf):
 # 州 FIPS → 州名（含阿拉斯加 02 / 夏威夷 15）
 STATE_NAMES = {
     "01":"Alabama","02":"Alaska","04":"Arizona","05":"Arkansas","06":"California",
-    "08":"Colorado","09":"Connecticut","10":"Delaware","11":"D.C.",
+    "08":"Colorado","09":"Connecticut","10":"Delaware","11":"Washington DC",
     "12":"Florida","13":"Georgia","15":"Hawaii","16":"Idaho","17":"Illinois",
     "18":"Indiana","19":"Iowa","20":"Kansas","21":"Kentucky",
     "22":"Louisiana","23":"Maine","24":"Maryland","25":"Massachusetts",
@@ -474,8 +474,12 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
         ax.set_aspect("equal")
         return True
 
-    # ── canvas 4K ────────────────────────────────────────
-    W, H, DPI = 7680, 4800, 600
+    # ── canvas：接近方形，以容纳真·1:1 合成（本土 + 大号阿拉斯加）──
+    XL0, XL1 = -2_650_000, 2_650_000
+    YL0, YL1 = -3_600_000, 2_300_000
+    DPI = 400
+    H = 6400
+    W = int(round(H * (XL1 - XL0) / (YL1 - YL0)))
     fig = plt.figure(figsize=(W/DPI, H/DPI), dpi=DPI, facecolor="white")
 
     # ── build state outlines by dissolving counties ─────
@@ -523,7 +527,7 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
         for line in shared_lines:
             plot_line(line)
 
-    # ── 先算好去过的州（含 AK / HI），供页脚使用 ──────────
+    # ── 先算好去过的州 + 州总数 ───────────────────────────
     import pandas as pd, math, numpy as np
     all_regions = pd.concat([conus_wgs, ak_wgs, hi_wgs]).copy()
     all_regions["_sfips"] = all_regions.apply(_state_fips, axis=1)
@@ -534,25 +538,19 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
             if sf in STATE_NAMES:
                 visited_states.add(sf)
     visited_state_names = sorted(STATE_NAMES[sf] for sf in visited_states)
+    total_states = len({sf for sf in all_regions["_sfips"] if sf in STATE_NAMES})
 
-    # ── main CONUS — 占满中部；上方留页边给标题/图例，下方留页边给州名 ──
-    ax_main = fig.add_axes([0.0, 0.175, 1.0, 0.685])
-    ax_main.set_facecolor("white")
-    ax_main.axis("off")
-    # Hard CONUS extent in ESRI:102003 (meters)
-    ax_main.set_xlim(-2_400_000, 2_500_000)
-    ax_main.set_ylim(-1_400_000, 1_650_000)
+    # ── 单坐标系真·1:1 合成：本土 + 同比例阿拉斯加/夏威夷 ─────────
+    ax_main = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+    ax_main.set_facecolor("white"); ax_main.axis("off")
+    ax_main.set_xlim(XL0, XL1); ax_main.set_ylim(YL0, YL1)
     ax_main.set_aspect("equal")
     draw_gdf(ax_main, conus_alb, visited_idx, lw=0.3)
     draw_state_borders(ax_main, states_alb, lw=0.6, color=C_STATE)
 
-    # ── Alaska + Hawaii：同一比例尺（等比例），嵌进地图左下角空海域，
-    #    与本土凑成一个完整矩形（经典 AlbersUSA 合成画法）──────────
     def _bounds(gdf):
         b = gdf.total_bounds
         return b if (np.all(np.isfinite(b)) and b[2] > b[0]) else None
-
-    # Alaska 取景：裁掉阿留申长尾（保留主体 + 任何已访问县）
     ak_frame = None
     if len(ak_alb) > 0:
         core = ak_wgs[(ak_wgs.geometry.representative_point().x > -156)
@@ -560,70 +558,68 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
         ak_frame = _bounds((core if len(core) else ak_wgs).to_crs(albers_ak))
     hi_frame = _bounds(hi_alb) if len(hi_alb) > 0 else None
 
-    # 统一 ppm（像素/米）：Alaska 取景高度约占画布 22%；Hawaii 同一 ppm
-    ppm = None
+    # 1:1 平移到本土坐标系左下角（不缩放 → 与本土完全同一比例尺）
+    CONUS_X0, CONUS_Y0 = -2_400_000, -1_400_000
+    ak_lab = hi_lab = None
+    hx0 = CONUS_X0
     if ak_frame is not None:
-        ppm = 0.20 * H / (ak_frame[3] - ak_frame[1])
-    elif hi_frame is not None:
-        ppm = 0.13 * H / (hi_frame[3] - hi_frame[1])
+        dxa = CONUS_X0 - ak_frame[0]
+        dya = (CONUS_Y0 - 230_000) - ak_frame[3]
+        akg = ak_alb.copy()
+        akg["geometry"] = ak_alb.geometry.translate(xoff=dxa, yoff=dya)
+        draw_gdf(ax_main, akg, visited_idx, lw=0.22)
+        akb = (ak_frame[0]+dxa, ak_frame[1]+dya, ak_frame[2]+dxa, ak_frame[3]+dya)
+        ak_lab = ((akb[0]+akb[2])/2, akb[1]-130_000)
+        hx0 = akb[2] + 420_000
+    if hi_frame is not None:
+        dxh = hx0 - hi_frame[0]
+        dyh = (CONUS_Y0 - 560_000) - hi_frame[3]
+        hig = hi_alb.copy()
+        hig["geometry"] = hi_alb.geometry.translate(xoff=dxh, yoff=dyh)
+        draw_gdf(ax_main, hig, visited_idx, lw=0.3)
+        hib = (hi_frame[0]+dxh, hi_frame[1]+dyh, hi_frame[2]+dxh, hi_frame[3]+dyh)
+        hi_lab = ((hib[0]+hib[2])/2, hib[1]-130_000)
+    if ak_lab:
+        ax_main.text(*ak_lab, "Alaska", ha="center", va="top",
+                     fontsize=15, color=C_MUTED, fontfamily=FONT_REG)
+    if hi_lab:
+        ax_main.text(*hi_lab, "Hawaii", ha="center", va="top",
+                     fontsize=15, color=C_MUTED, fontfamily=FONT_REG)
 
-    def _place_inset(frame, gdf, x0, baseline, label, lw):
-        dx, dy = frame[2]-frame[0], frame[3]-frame[1]
-        w, h = dx*ppm/W, dy*ppm/H
-        ax = fig.add_axes([x0, baseline, w, h])
-        ax.axis("off"); ax.patch.set_visible(False)
-        draw_gdf(ax, gdf, visited_idx, lw=lw)
-        ax.set_xlim(frame[0], frame[2]); ax.set_ylim(frame[1], frame[3])
-        ax.text(0.5, -0.07, label, transform=ax.transAxes, ha="center", va="top",
-                fontsize=14, color=C_MUTED, fontfamily=FONT_REG)
-        return x0 + w, h
-
-    INSET_BASE = 0.185   # 底边贴着地图下沿，嵌入左下角
-    if ppm:
-        x_after = 0.025
-        if ak_frame is not None:
-            x_after, _ = _place_inset(ak_frame, ak_alb, 0.025, INSET_BASE, "Alaska", 0.2)
-        if hi_frame is not None:
-            _place_inset(hi_frame, hi_alb, x_after + 0.015, INSET_BASE, "Hawaii", 0.35)
-
-    # ── title + subtitle（左上）+ legend（右上）分列两侧，互不重叠 ──
+    # ── title + subtitle（顶部居中）：USA Map + 县数/州数 ─────────
     total = len(counties_gdf)
-    pct   = len(visited_idx) / total * 100
-    fig.text(0.03, 0.975, "Fog of World   ·   USA County Explorer",
-             ha="left", va="top", fontsize=26, fontweight="semibold",
-             color=C_INK, fontfamily=FONT_SEMI)
-    fig.text(0.03, 0.933,
-             f"{len(visited_idx):,} of {total:,} counties explored   ·   {pct:.1f}%",
-             ha="left", va="top", fontsize=17, color=C_MUTED, fontfamily=FONT_REG)
+    cx = (XL0 + XL1) / 2
+    ax_main.text(cx, 2_130_000, "USA Map", ha="center", va="top",
+                 fontsize=32, fontweight="semibold", color=C_INK, fontfamily=FONT_SEMI)
+    ax_main.text(cx, 1_820_000,
+                 f"{len(visited_idx):,} / {total:,} counties     ·     "
+                 f"{len(visited_state_names)} / {total_states} states",
+                 ha="center", va="top", fontsize=18, color=C_MUTED, fontfamily=FONT_REG)
 
-    # ── Legend — 顶部右侧页边（在地图上方，绝不压图）────────────
-    v_patch = mpatches.Patch(color=C_VIS,   label=f"Visited ({len(visited_idx):,} counties)")
-    u_patch = mpatches.Patch(color=C_UNVIS, label="Not visited")
-    ax_leg = fig.add_axes([0.68, 0.905, 0.31, 0.075])
-    ax_leg.axis("off"); ax_leg.patch.set_visible(False)
-    leg = ax_leg.legend(handles=[v_patch, u_patch], loc="center left",
-                        frameon=False, handlelength=1.2, handleheight=1.2,
-                        labelspacing=0.7, borderaxespad=0.0,
-                        prop={"family": FONT_REG, "size": 16})
-    for t in leg.get_texts():
-        t.set_color(C_INK)
+    # ── Legend — 右下角空白海域（手绘色块，绝不压地图）──────────
+    lx, ly = 700_000, -1_650_000
+    sw, sh, dyrow = 250_000, 155_000, 300_000
+    ax_main.add_patch(mpatches.Rectangle((lx, ly), sw, sh, fc=C_VIS, ec="none"))
+    ax_main.text(lx+sw+110_000, ly+sh/2, f"Visited ({len(visited_idx):,} counties)",
+                 va="center", ha="left", fontsize=17, color=C_INK, fontfamily=FONT_REG)
+    ax_main.add_patch(mpatches.Rectangle((lx, ly-dyrow), sw, sh, fc=C_UNVIS, ec="none"))
+    ax_main.text(lx+sw+110_000, ly-dyrow+sh/2, "Not visited",
+                 va="center", ha="left", fontsize=17, color=C_INK, fontfamily=FONT_REG)
 
-    # ── Visited states — 底部页边，简洁居中、收窄不撑宽 ──────────
+    # ── Visited states — 右下角，简洁居中、收窄 ──────────────────
     if visited_state_names:
         n = len(visited_state_names)
-        per_line = 7
+        per_line = 5
         nlines = max(1, math.ceil(n / per_line))
         per_line = math.ceil(n / nlines)
-        sep = "    ·    "
-        lines = [sep.join(visited_state_names[i:i + per_line])
-                 for i in range(0, n, per_line)]
+        sep = "   ·   "
+        lines = [sep.join(visited_state_names[i:i+per_line]) for i in range(0, n, per_line)]
         body = "\n".join(lines)
-        fig.text(0.5, 0.145, f"States visited · {n}",
-                 ha="center", va="top", fontsize=17, fontweight="semibold",
-                 color=C_INK, fontfamily=FONT_SEMI)
-        fig.text(0.5, 0.108, body,
-                 ha="center", va="top", fontsize=16, linespacing=1.6,
-                 color=C_MUTED, fontfamily=FONT_REG)
+        scx = 1_600_000
+        ax_main.text(scx, -2_380_000, f"States visited · {n}", ha="center", va="top",
+                     fontsize=18, fontweight="semibold", color=C_INK, fontfamily=FONT_SEMI)
+        ax_main.text(scx, -2_660_000, body, ha="center", va="top",
+                     fontsize=15, linespacing=1.7, color=C_MUTED, fontfamily=FONT_REG)
 
     print(f"Saving image ({W}x{H} @ {DPI}dpi)...")
     plt.savefig(output_path, dpi=DPI,
