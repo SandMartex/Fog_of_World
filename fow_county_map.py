@@ -572,7 +572,7 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
         return f"{y}.{int(m):02d}"
 
     # ── 本土 48 州（左侧主体，撑满左半）────────────────────────
-    MAIN_RECT = [0.012, 0.045, 0.655, 0.815]
+    MAIN_RECT = [0.012, 0.210, 0.655, 0.650]
     ax_fr = fig.add_axes(MAIN_RECT)
     ax_fr.set_xticks([]); ax_fr.set_yticks([]); ax_fr.set_facecolor(C_SEA)
     for s in ax_fr.spines.values():
@@ -598,8 +598,9 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     ax_main.text(lx + sq + 45_000, ly + sq/2, "Not yet", va="center",
                  ha="left", fontsize=11.5, color=C_INK, fontfamily=FONT_REG, zorder=9)
 
-    # ── 右栏：Stats / Insets / Travel Log，统一的 sidebar system ───────
+    # ── 信息栏：右侧只放 Stats / Travel Log；AK/HI 回到左侧地图系统 ─────
     RCOL_X, RCOL_W = 0.700, 0.285
+    LCOL_X, LCOL_W = 0.012, 0.655
     MODULE_TITLE_SIZE = 10.5
 
     def _bounds(gdf):
@@ -612,36 +613,36 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
         ak_frame = _bounds((core if len(core) else ak_wgs).to_crs(albers_ak))
     hi_frame = _bounds(hi_alb) if len(hi_alb) > 0 else None
 
-    fig.text(RCOL_X, 0.835, tracked("INSET MAPS"), ha="left", va="top",
+    fig.text(LCOL_X, 0.178, tracked("INSET MAPS"), ha="left", va="top",
              fontsize=MODULE_TITLE_SIZE, color=C_MUTED, fontfamily=FONT_REG,
              fontweight="semibold")
 
-    def _zoomed_frame(frame, zoom=1.0):
+    def _padded_frame(frame, pad=0.06):
         x0, y0, x1, y1 = frame
-        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        w, h = (x1 - x0) * zoom, (y1 - y0) * zoom
-        return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+        px = (x1 - x0) * pad
+        py = (y1 - y0) * pad
+        return (x0 - px, y0 - py, x1 + px, y1 + py)
 
-    def _inset_box(frame, gdf, box, label, lw, zoom=0.92):
+    def _inset_box(frame, gdf, box, label, lw, pad=0.06):
         x0, y0, bw, bh = box
         fr = fig.add_axes([x0, y0, bw, bh])
         fr.set_xticks([]); fr.set_yticks([]); fr.set_facecolor(C_WATER)
         for s in fr.spines.values():
-            s.set_edgecolor(C_FRAME); s.set_linewidth(0.65)
-        fr.text(0.5, 0.920, tracked(label.upper()), transform=fr.transAxes,
+            s.set_edgecolor(C_FRAME); s.set_linewidth(0.70)
+        fr.text(0.5, 0.900, tracked(label.upper()), transform=fr.transAxes,
                 ha="center", va="center", fontsize=MODULE_TITLE_SIZE, color=C_MUTED,
                 fontfamily=FONT_REG, fontweight="semibold")
-        inner = fig.add_axes([x0+bw*0.040, y0+bh*0.030, bw*0.92, bh*0.80])
+        inner = fig.add_axes([x0+bw*0.035, y0+bh*0.045, bw*0.93, bh*0.76])
         inner.axis("off"); inner.set_facecolor("none")
         draw_gdf(inner, gdf, visited_idx, lw=lw)
-        xmn, ymn, xmx, ymx = _zoomed_frame(frame, zoom)
+        xmn, ymn, xmx, ymx = _padded_frame(frame, pad)
         inner.set_xlim(xmn, xmx); inner.set_ylim(ymn, ymx)
         inner.set_aspect("equal")
 
     if ak_frame is not None:
-        _inset_box(ak_frame, ak_alb, [RCOL_X, 0.595, RCOL_W, 0.222], "Alaska", 0.15, zoom=0.90)
+        _inset_box(ak_frame, ak_alb, [LCOL_X, 0.045, 0.420, 0.125], "Alaska", 0.15, pad=0.08)
     if hi_frame is not None:
-        _inset_box(hi_frame, hi_alb, [RCOL_X, 0.425, RCOL_W, 0.142], "Hawaii", 0.20, zoom=0.78)
+        _inset_box(hi_frame, hi_alb, [LCOL_X + 0.435, 0.045, LCOL_W - 0.435, 0.125], "Hawaii", 0.20, pad=0.08)
 
     # ── 标题 + 副标题（左上）──────────────────────────────────
     fig.text(0.025, 0.965, tracked("AMERICAN") + "   " + tracked("ATLAS"),
@@ -651,7 +652,7 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
              ha="left", va="top", fontsize=15, color=C_MUTED,
              fontfamily=FONT_REG, fontstyle="italic")
 
-    # ── 进度条（sidebar stats，克制的 atlas rule）────────────────
+    # ── 进度条（右上角 stats，带百分比；数字不使用千位逗号）──────────
     ax_prog = fig.add_axes([RCOL_X, 0.865, RCOL_W, 0.105])
     ax_prog.axis("off"); ax_prog.set_xlim(0, 1); ax_prog.set_ylim(0, 1)
     ax_prog.text(0.0, 0.98, tracked("STATS"), ha="left", va="top",
@@ -664,7 +665,7 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
         y_bar = y_top - 0.145
         ax_prog.text(0.0, y_top, tracked(label), ha="left", va="center",
                      fontsize=9.5, color=C_MUTED, fontfamily=FONT_REG)
-        ax_prog.text(1.0, y_top, f"{num:,} / {den:,}",
+        ax_prog.text(1.0, y_top, f"{num} / {den}   {frac:.0%}",
                      ha="right", va="center", fontsize=10.0,
                      color=C_INK, fontfamily=FONT_MONO)
         ax_prog.add_patch(mpatches.Rectangle((0, y_bar), 1.0, bar_h,
@@ -676,23 +677,23 @@ def plot_map(counties_gdf, visited_idx, output_path="fow_usa_counties.png"):
     progress_row(0.27, "STATES", nst, total_states)
 
     # ── 旅行时间线（右栏底部，按年份分组的 atlas archive）──────────
-    fig.text(RCOL_X, 0.385, tracked("TRAVEL LOG"), ha="left", va="top",
+    fig.text(RCOL_X, 0.790, tracked("TRAVEL LOG"), ha="left", va="top",
              fontsize=MODULE_TITLE_SIZE, color=C_MUTED, fontfamily=FONT_REG,
              fontweight="semibold")
-    y = 0.352
+    y = 0.750
     prev_year = None
     for state, date in TRAVEL_LOG:
         year = date.split(".")[0]
         if prev_year is not None and year != prev_year:
-            y -= 0.010
-            fig.add_artist(plt.Line2D([RCOL_X, RCOL_X + RCOL_W], [y + 0.005, y + 0.005],
+            y -= 0.016
+            fig.add_artist(plt.Line2D([RCOL_X, RCOL_X + RCOL_W], [y + 0.006, y + 0.006],
                                       transform=fig.transFigure, color=C_RULE,
                                       lw=0.30, alpha=0.70))
         fig.text(RCOL_X, y, fmt_date(date), ha="left", va="top",
-                 fontsize=9.4, color=C_MUTED, fontfamily=FONT_MONO)
-        fig.text(RCOL_X + 0.046, y, state, ha="left", va="top",
-                 fontsize=9.8, color=C_INK, fontfamily=FONT_REG)
-        y -= 0.0172
+                 fontsize=10.2, color=C_MUTED, fontfamily=FONT_MONO)
+        fig.text(RCOL_X + 0.052, y, state, ha="left", va="top",
+                 fontsize=10.6, color=C_INK, fontfamily=FONT_REG)
+        y -= 0.0240
         prev_year = year
 
     print(f"Saving image ({W}x{H} @ {DPI}dpi)...")
